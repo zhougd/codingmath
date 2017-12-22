@@ -8,7 +8,7 @@ fi
 if [ ! -d webrtc-audio-processing/release ];then
   cd webrtc-audio-processing
   mv RELEASE release.txt >/dev/null
-  ./autogen.sh --prefix=`pwd`/release && make -j && make install && cd -
+  ./autogen.sh --prefix=`pwd`/release && make && make install && cd -
 fi
 
 mkdir -p bin; cd bin; cmake ../; make; cd -
@@ -42,9 +42,13 @@ done
 echo "============= WebRTC AEC ============="
 rm -f data/*webrtc_aec*
 rm -f data/speech_16k_echo.wav data/speech_16k_echo.raw
+rm /data/music-add-delay.wav
 delay=1500
-sox data/speech_16k.wav data/speech_16k_echo.wav echo 0.8 0.2 $delay 0.3
+#sox data/speech_16k.wav data/speech_16k_echo.wav echo 0.8 0.2 $delay 0.3
+sox data/100ms.wav /data/music6.wav /data/music-add-delay.wav
+sox -m /data/music-add-delay.wav /data/speech_16k.wav /data/speech_16k_echo.wav
 sox data/speech_16k_echo.wav data/speech_16k_echo.raw
+sox /data/music6.wav /data/echo.raw
 
 for x in 0 1 2;do
   echo -n "WebRTC AEC $x: "
