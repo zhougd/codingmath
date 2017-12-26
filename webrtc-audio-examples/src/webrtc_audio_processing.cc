@@ -19,7 +19,7 @@
 
 int usage() {
     std::cout <<
-              "Usage: webrtc-audio-process -anc|-agc|-aec value input.wav output.wav [delay_ms echo_in.wav]"
+              "Usage: webrtc-audio-process -anc n -agc n -aec n delay_ms input.wav output.wav echo_ref.wav"
               << std::endl;
     return 1;
 }
@@ -53,22 +53,36 @@ bool WriteFrame(FILE* file, webrtc::AudioFrame* frame) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 5 && argc != 7) {
+    if (argc != 11) {
         return usage();
     }
 
-    bool is_echo_cancel = false;
     FILE *echo_in = NULL;
-    int level, delay_ms = -1;
-    level = atoi(argv[2]);
+    int anc_level, agc_level, aec_level, delay_ms = -1;
+    anc_level = atoi(argv[2]);
+    agc_level = atoi(argv[4]);
+    aec_level = atoi(argv[6]);
+    delay_ms = atoi(argv[7]);
+    std::string file_in = argv[8];
+    std::string file_out = argv[9];
+    std::string file_echo_ref = argv[10];
+    bool use_aecm = (std::string(argv[5]) == "-aecm") ? 1:0;
+    int ret;
 
-    // Usage example, omitting error checking:
+    webrtc::AudioFrame *frame = new webrtc::AudioFrame();
+    webrtc::AudioFrame *echo_ref_frame = NULL;
+    float frame_step = 10;  // ms
+    frame->sample_rate_hz_ = 16000;
+    frame->samples_per_channel_ = frame->sample_rate_hz_ * frame_step / 1000.0;
+    frame->num_channels_ = 1;
+
     webrtc::AudioProcessing* apm = webrtc::AudioProcessing::Create();
     apm->high_pass_filter()->Enable(true);
-    if (std::string(argv[1]) == "-anc") {
-        std::cout << "ANC: level " << level << std::endl;
+
+    std::cout << "ANC: level " << anc_level << std::endl;
+    if (anc_level >= 0) {
         apm->noise_suppression()->Enable(true);
-        switch (level) {
+        switch (anc_level) {
         case 0:
             apm->noise_suppression()->set_level(webrtc::NoiseSuppression::kLow);
             break;
@@ -85,11 +99,12 @@ int main(int argc, char **argv) {
             apm->noise_suppression()->set_level(webrtc::NoiseSuppression::kVeryHigh);
         }
         apm->voice_detection()->Enable(true);
-    } else if (std::string(argv[1]) == "-agc") {
-        std::cout << "AGC: model " << level << std::endl;
+    }
+    std::cout << "AGC: model " << agc_level << std::endl;
+    if (agc_level >= 0) {
         apm->gain_control()->Enable(true);
         apm->gain_control()->set_analog_level_limits(0, 255);
-        switch (level) {
+        switch (agc_level) {
         case 0:
             apm->gain_control()->set_mode(webrtc::GainControl::kAdaptiveAnalog);
             break;
@@ -102,62 +117,92 @@ int main(int argc, char **argv) {
         default:
             apm->gain_control()->set_mode(webrtc::GainControl::kAdaptiveAnalog);
         }
-    } else if (std::string(argv[1]) == "-aec") {
-        webrtc::EchoCancellation *echo_canell = apm->echo_cancellation();
-        is_echo_cancel = true;
-        echo_canell->enable_drift_compensation(false);
-        echo_canell->Enable(true);
-        std::cout << "AEC: level " << level << std::endl;
-        switch (level) {
-            case 0:
-                echo_canell->set_suppression_level(webrtc::EchoCancellation::kLowSuppression);
-                break;
-            case 1:
-                echo_canell->set_suppression_level(webrtc::EchoCancellation::kModerateSuppression);
-                break;
-            case 2:
-                echo_canell->set_suppression_level(webrtc::EchoCancellation::kHighSuppression);
+    }
+	
+    std::cout << "AEC: level " << aec_level << std::endl;
+    if (aec_level >= 0) {
+        if (use_aecm) { 
+            webrtc::EchoControlMobile *aecm = apm->echo_control_mobile();
+	switch (aec_level) {
+                case 0:
+	        ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kQuietEarpieceOrHeadset);
+	        break;
+	    case 1:
+                   ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kEarpiece); 
+                   break;
+                case 2:
+                   ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kLoudEarpiece); 
+                   break;
+                case 3:
+                   ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kSpeakerphone); 
+                   break;
+                case 4:
+                   ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kLoudSpeakerphone); 
+                   break;
+                default:
+                    ret = aecm->set_routing_mode(webrtc::EchoControlMobile::kQuietEarpieceOrHeadset);
+                    break;
+	}
+            std::cout << "set_routing_mode ret " << ret << std::endl;
+            ret = aecm->enable_comfort_noise(false);
+            std::cout << "enable_comfort_noise ret" << ret << std::endl;
+	ret = aecm->Enable(true);
+            std::cout << "Enable ret =" << ret << std::endl;
+        } else {
+            webrtc::EchoCancellation *aec = apm->echo_cancellation();
+	ret = aec->Enable(true);
+	std::cout << "Enable ret =" << ret << std::endl;
+	switch (aec_level) {
+		case 0:
+			aec->set_suppression_level(webrtc::EchoCancellation::kLowSuppression);
+			break;
+		case 1:
+			aec->set_suppression_level(webrtc::EchoCancellation::kModerateSuppression);
+			break;
+		case 2:
+			aec->set_suppression_level(webrtc::EchoCancellation::kHighSuppression);
+	}
         }
-        delay_ms = atoi(argv[5]);
+
         apm->set_stream_delay_ms(delay_ms);
-        EXPECT_NE(echo_in = fopen(argv[6], "rb"), NULL);
-    } else {
-        delete apm;
-        return usage();
+        std::cout << "delay " << delay_ms << std::endl;
+        EXPECT_NE(echo_in = fopen(file_echo_ref.data(), "rb"), NULL);
+        echo_ref_frame = new webrtc::AudioFrame();
+        echo_ref_frame->sample_rate_hz_ = 16000;
+        echo_ref_frame->num_channels_ = 1;
+        echo_ref_frame->samples_per_channel_ = echo_ref_frame->sample_rate_hz_ * frame_step / 1000.0;
     }
 
-    webrtc::AudioFrame *frame = new webrtc::AudioFrame();
-    float frame_step = 10;  // ms
-    frame->sample_rate_hz_ = 16000;
-    frame->samples_per_channel_ = frame->sample_rate_hz_ * frame_step / 1000.0;
 
-    frame->num_channels_ = 1;
-    webrtc::AudioFrame *echo_frame = NULL;
-    if (is_echo_cancel) {
-        echo_frame = new webrtc::AudioFrame();
-    }
 
-    FILE *wav_in = fopen(argv[3], "rb");
-    FILE *wav_out = fopen(argv[4], "wb");
+    FILE *wav_in = fopen(file_in.data(), "rb");
+    FILE *wav_out = fopen(file_out.data(), "wb");
+    std::cout << "in " << file_in.data() << " out " <<file_out.data()<< " ref " <<  file_echo_ref.data() << std::endl;
     EXPECT_NE(wav_in, NULL);
     EXPECT_NE(wav_out, NULL);
     int num_frame = 0;
     while (ReadFrame(wav_in, frame)) {
         num_frame += 1;
-        apm->ProcessStream(frame);
-        if (is_echo_cancel && (num_frame * frame_step > delay_ms)) {
-            if (ReadFrame(echo_in, echo_frame))
-                apm->ProcessReverseStream(echo_frame);
+        if (aec_level >= 0 ) {
+            if (ReadFrame(echo_in, echo_ref_frame)) {
+                ret = apm->ProcessReverseStream(echo_ref_frame);
+                //std::cout << "ProcessReverseStream=" << ret << std::endl;
+            }
+	apm->set_stream_delay_ms(delay_ms);
         }
+        ret = apm->ProcessStream(frame);
+        //std::cout << "ProcessStream=" << ret << std::endl;
         WriteFrame(wav_out, frame);
     }
     fclose(wav_in);
     fclose(wav_out);
-    fclose(echo_in);
+    if (echo_in) {
+        fclose(echo_in);
+    }
 
     delete frame;
-    if (is_echo_cancel)
-        delete echo_frame;
+    if (echo_ref_frame != NULL)
+        delete echo_ref_frame;
 
     delete apm;
 
